@@ -1,4 +1,4 @@
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
+import { createToolServer, tool } from './tools.mjs'
 import { z } from 'zod'
 
 /**
@@ -335,7 +335,7 @@ const GOLDEN_ANGLE = 137.507764
  * @param {(op: string, args: object) => void} emit - pushes one ui message
  */
 export function uiServer(emit) {
-  return createSdkMcpServer({
+  return createToolServer({
     name: 'jarvis_ui',
     version: '1.0.0',
     instructions:

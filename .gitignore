@@ -11,6 +11,9 @@ node_modules
 dist
 dist-ssr
 *.local
+jarvis-routines.local.json
+jarvis-routines.local.json.*.tmp
+.env
 
 # Editor directories and files
 .vscode/*

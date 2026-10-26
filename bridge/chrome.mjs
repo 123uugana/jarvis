@@ -1,9 +1,10 @@
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
+import { createToolServer, tool } from './tools.mjs'
 import { z } from 'zod'
 import { createConnection } from 'node:net'
 import { readdir, stat } from 'node:fs/promises'
 import { userInfo } from 'node:os'
 import { join } from 'node:path'
+import { browserTarget, chromeExecutable, openChrome, windowsCommand } from './desktop.mjs'
 
 /**
  * JARVIS's hands on your actual browser.
@@ -247,7 +248,7 @@ class ChromeLink {
       const message = { method: 'execute_tool', params: { tool: name, args: args ?? {} } }
       try {
         return await this.request(message)
-      } catch (err) {
+      } catch {
         this.reset()
         return await this.request(message)
       }
@@ -377,7 +378,7 @@ function readTab(reply) {
     // The first block is JSON; the ones after it are the same thing in prose.
     try {
       const parsed = JSON.parse(block.text)
-      const tab = parsed?.availableTabs?.[0]?.tabId
+      const tab = parsed?.tabId ?? parsed?.tab?.tabId ?? parsed?.availableTabs?.[0]?.tabId
       if (typeof tab === 'number') return tab
     } catch {
       const m = /"?tabId"?[:\s]+(\d{3,})/.exec(block.text)
@@ -552,6 +553,8 @@ be clicked. Use chrome_page_text instead when you only want the prose.`
  */
 export function chromeServer({ allowWrites }) {
   const tools = [
+    tool('chrome_search_youtube', 'Search YouTube for the user’s query in a new Chrome tab.',
+      { query: z.string().trim().min(1).max(300) }, async ({ query }) => ({ content: [{ type: 'text', text: await openChrome(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`) }] })),
     tool(
       'chrome_status',
       'Check whether the user\'s browser is reachable, and which tabs exist. ' +
@@ -566,8 +569,13 @@ export function chromeServer({ allowWrites }) {
               {
                 type: 'text',
                 text:
-                  'The browser extension is not running. Chrome may be closed, ' +
-                  'or the Claude extension may be disabled.',
+                  (chromeExecutable()
+                    ? 'Chrome can open URLs and new tabs using native launch. '
+                    : 'Chrome was not found. Set JARVIS_CHROME_PATH. ') +
+                  (process.platform === 'win32' && allowWrites
+                    ? 'Native tab switching/closing and English YouTube playback controls are enabled. '
+                    : '') +
+                  'The extension is unavailable: general page reading, clicking, typing, tab listing and history are unavailable.',
               },
             ],
           }
@@ -600,6 +608,10 @@ export function chromeServer({ allowWrites }) {
         tabId,
       },
       async (args) => {
+        if (!['back', 'forward'].includes(args.url)) browserTarget(args.url)
+        if (!(await findSocket()) && !args.tabId && !['back', 'forward'].includes(args.url)) {
+          return { content: [{ type: 'text', text: await openChrome(args.url) }] }
+        }
         const out = await forward('navigate')(args)
         if (out.isError) return out
         // Do not hand back until the page is really there. Everything the model
@@ -611,6 +623,25 @@ export function chromeServer({ allowWrites }) {
         } else {
           // back / forward: no target to compare against, so just let it breathe.
           await new Promise((r) => setTimeout(r, 700))
+        }
+        return out
+      },
+    ),
+
+    tool(
+      'chrome_new_tab',
+      'Open a new Chrome tab, optionally at an HTTP(S) URL (YouTube, Instagram, etc.). Works without the browser extension. Native launch cannot inspect the page.',
+      { url: z.string().optional() },
+      async ({ url }) => {
+        const target = browserTarget(url)
+        if (!(await findSocket())) return { content: [{ type: 'text', text: await openChrome(target) }] }
+        const reply = await link.call('tabs_create_mcp', {})
+        const out = toResult(reply)
+        if (out.isError) return out
+        activeTab = readTab(reply)
+        if (url) {
+          if (activeTab === null) return { isError: true, content: [{ type: 'text', text: 'The tab opened but its ID is unavailable. Navigation was not attempted.' }] }
+          return forward('navigate')({ url: target, tabId: activeTab })
         }
         return out
       },
@@ -725,6 +756,14 @@ export function chromeServer({ allowWrites }) {
    * on together.
    */
   if (allowWrites) {
+    if (process.platform === 'win32') tools.push(
+      tool('chrome_tab_control', 'Windows Chrome: switch to next/previous tab or close the selected tab. Uses the most recent Chrome window unless windowId is supplied. Refuses to close the Jarvis tab.',
+        { action: z.enum(['next', 'previous', 'close']), windowId: z.number().int().positive().optional() },
+        async ({ action, windowId }) => { await windowsCommand(`chrome_${action}`, windowId); return { content: [{ type: 'text', text: `Chrome: ${action} tab.` }] } }),
+      tool('chrome_youtube', 'Windows Chrome: play, pause or toggle playback on an already selected YouTube video. Checks the URL and invokes the player button. Requires English Chrome/YouTube labels. Does not start a video from search results.',
+        { action: z.enum(['play', 'pause', 'toggle']), windowId: z.number().int().positive().optional() },
+        async ({ action, windowId }) => { await windowsCommand(`youtube_${action}`, windowId); return { content: [{ type: 'text', text: `YouTube: ${action}.` }] } }),
+    )
     tools.push(
       tool(
         'chrome_click',
@@ -770,18 +809,6 @@ export function chromeServer({ allowWrites }) {
       ),
 
       tool(
-        'chrome_new_tab',
-        'Open a fresh blank tab and work in it from now on.',
-        {},
-        async (args) => {
-          const out = await forward('tabs_create_mcp', { needsTab: false })(args)
-          // Whatever was just opened is what the next action should land in.
-          activeTab = null
-          return out
-        },
-      ),
-
-      tool(
         'chrome_close_tab',
         'Close a tab by id.',
         {
@@ -798,7 +825,7 @@ export function chromeServer({ allowWrites }) {
     )
   }
 
-  return createSdkMcpServer({
+  return createToolServer({
     name: 'jarvis_chrome',
     version: '1.0.0',
     instructions:
@@ -815,5 +842,5 @@ export function chromeServer({ allowWrites }) {
 
 /** Whether the extension looks reachable, for the boot log. */
 export async function chromeAvailable() {
-  return (await findSocket()) !== null
+  return Boolean(chromeExecutable()) || (await findSocket()) !== null
 }

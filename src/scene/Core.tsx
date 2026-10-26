@@ -241,6 +241,7 @@ export function Core({ drive }: { drive: Drive }) {
   )
 
   useFrame((_, dt) => {
+    dt = Math.min(dt, 0.05)
     if (!mat.current || !mesh.current) return
     const u = mat.current.uniforms
     const r = drive.reactor

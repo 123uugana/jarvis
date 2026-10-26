@@ -1,5 +1,6 @@
-import { useMemo } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
+import { PerformanceMonitor } from '@react-three/drei'
 import {
   EffectComposer,
   Bloom,
@@ -192,14 +193,23 @@ function Rig() {
   )
 }
 
-export function Scene() {
+export const Scene = memo(function Scene() {
+  const [dpr, setDpr] = useState(() => Math.min(window.devicePixelRatio || 1, 1.5))
+  const [visible, setVisible] = useState(!document.hidden)
+  useEffect(() => {
+    const update = () => setVisible(!document.hidden)
+    document.addEventListener('visibilitychange', update)
+    return () => document.removeEventListener('visibilitychange', update)
+  }, [])
   return (
     <Canvas
       className="scene"
       camera={{ position: [0, 0, 6.2], fov: 45 }}
-      gl={{ antialias: true, alpha: true }}
-      dpr={[1, 2]}
+      gl={{ antialias: false, alpha: true, powerPreference: 'high-performance' }}
+      dpr={dpr}
+      frameloop={visible ? 'always' : 'never'}
     >
+      <PerformanceMonitor onDecline={() => setDpr(1)} />
       <Rig />
       {/*
         multisampling={0} on purpose. The default is 8, which allocates a
@@ -237,4 +247,4 @@ export function Scene() {
       </EffectComposer>
     </Canvas>
   )
-}
+})

@@ -211,6 +211,10 @@ function defined<T extends object>(patch: T | undefined): Partial<T> {
 const MAX_ORBITS = 8
 
 type State = {
+  draft: string
+  editing: boolean
+  setDraft: (draft: string) => void
+  setEditing: (editing: boolean) => void
   phase: Phase
   /** 0..1 mic loudness, drives the reactor pulse. */
   level: number
@@ -271,6 +275,10 @@ type State = {
 }
 
 export const useStore = create<State>((set) => ({
+  draft: '',
+  editing: false,
+  setDraft: (draft) => set({ draft }),
+  setEditing: (editing) => set({ editing }),
   phase: 'offline',
   level: 0,
   caption: '',

@@ -175,9 +175,11 @@ body::after {
 
 .meter-fill {
   width: 100%;
+  height: 100%;
+  transform-origin: bottom;
   background: var(--accent);
   box-shadow: 0 0 12px var(--accent);
-  transition: height 90ms linear;
+  transition: transform 90ms linear;
 }
 
 /* Tool badge */
@@ -257,7 +259,7 @@ body::after {
 .log {
   position: absolute;
   left: 50%;
-  bottom: 132px;
+  bottom: 208px;
   transform: translateX(-50%);
   width: min(760px, 68vw);
   display: flex;
@@ -295,7 +297,7 @@ body::after {
 .caption {
   position: absolute;
   left: 50%;
-  bottom: 88px;
+  bottom: 164px;
   transform: translateX(-50%);
   font-size: 16px;
   text-transform: none;
@@ -309,7 +311,7 @@ body::after {
 .error {
   position: absolute;
   left: 50%;
-  bottom: 52px;
+  bottom: 136px;
   transform: translateX(-50%);
   color: #ff6b6b;
   font-size: 10px;
@@ -321,7 +323,7 @@ body::after {
 
 .hud-bottom {
   position: absolute;
-  bottom: 44px;
+  bottom: 14px;
   left: 0;
   right: 0;
   text-align: center;
@@ -336,6 +338,41 @@ kbd {
   padding: 1px 5px;
   font-size: 9px;
 }
+
+.command-dock {
+  position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
+  width: min(820px, 88vw); z-index: 12; color: #d9f7ff; font-size: 12px;
+}
+.command-dock form { display: flex; gap: 8px; }
+.command-dock input:not([type="checkbox"]) { min-width: 60px; flex: 1; }
+.command-dock input:not([type="checkbox"]), .command-dock button, .control-dialog input:not([type="checkbox"]), .control-dialog select, .control-dialog textarea, .control-dialog button {
+  color: #def9ff; background: #061522; border: 1px solid #276170; border-radius: 5px;
+  padding: 10px; font: inherit;
+}
+.command-dock button, .control-dialog button { cursor: pointer; }
+.command-dock button:disabled, .control-dialog button:disabled { opacity: .4; cursor: default; }
+.command-dock :focus-visible, .control-dialog :focus-visible { outline: 2px solid #00e5ff; outline-offset: 2px; }
+.review-toggle { display: inline-flex; gap: 5px; align-items: center; margin-top: 8px; margin-right: 12px; }
+.control-dialog { background: #06111c; color: #d9f7ff; border: 1px solid #317080; border-radius: 12px; width: min(760px, 94vw); max-height: 88vh; padding: 24px; font: 14px/1.5 system-ui, sans-serif; }
+.control-dialog::backdrop { background: #000b; }
+.control-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.control-dialog h2, .control-dialog h3 { margin: 0 0 12px; }
+.control-dialog section { border-top: 1px solid #23434f; margin-top: 20px; padding-top: 18px; }
+.control-dialog label { display: inline-flex; gap: 8px; align-items: center; }
+.control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.control-grid label, .routine-editor label { display: flex; flex-direction: column; align-items: stretch; }
+.control-dialog select { min-width: 0; max-width: 100%; }
+.control-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; }
+.control-actions select { flex: 1; }
+.control-dialog .pause-slider { display: flex; margin: 14px 0; flex-wrap: wrap; }
+.pause-slider input { flex: 1; min-width: 100px; }
+.control-dialog small { display: block; color: #9dbecc; }
+.input-meter meter { width: 180px; }
+.control-notice { white-space: pre-wrap; color: #b0f0ff; }
+.routine-editor { border: 1px solid #23434f; padding: 12px; margin: 12px 0; display: grid; gap: 10px; }
+.routine-editor textarea { resize: vertical; }
+@media (max-width: 600px) { .control-grid { grid-template-columns: 1fr; } .control-dialog { padding: 16px; } }
+@media (max-width: 600px) { .command-dock form { flex-wrap: wrap; } .command-dock input:not([type="checkbox"]) { flex-basis: 65%; } .log { bottom: 250px; max-height: 36vh; overflow: auto; } }
 
 /* ----------------------------------------------------------------- panels */
 
@@ -774,7 +811,7 @@ kbd {
 .suggest {
   position: absolute;
   left: 50%;
-  bottom: 96px;
+  bottom: 178px;
   transform: translateX(-50%);
   display: flex;
   align-items: baseline;

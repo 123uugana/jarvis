@@ -2,25 +2,7 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { useStore } from '../store'
 
-/**
- * The start-up sequence, rebuilt to the Iron Man boot it is quoting.
- *
- * Four beats, in order, cyan on black:
- *   1. an angular status bar — "INITIATING SYSTEM" — over a scrolling boot log,
- *      with a segmented bar filling left to right;
- *   2. concentric reticle rings assembling inward until "J.A.R.V.I.S" resolves
- *      at the centre;
- *   3. the suit schematic — a wireframe figure with component call-outs;
- *   4. the triangular arc reactor lighting from a dim outline to full glow,
- *      which is the hand-off into the live scene behind it.
- *
- * It is one full-frame overlay driven by a small stage clock rather than four
- * components, so the timing is legible in one place. Everything is SVG and CSS
- * — no images to load, nothing that can arrive late and stall the first beat.
- */
 
-/** The stage boundaries, in milliseconds from power-on. `done` is when the
- *  overlay dissolves; App owns the actual hand-off, this is only for pacing. */
 const T = { rings: 2600, suit: 5200, reactor: 7200 }
 
 const LOG = [

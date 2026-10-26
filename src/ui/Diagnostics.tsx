@@ -19,6 +19,7 @@ import { useStore } from '../store'
  */
 
 type VoiceDiag = {
+  language: string
   running: boolean
   sessions: number
   heard: string
@@ -62,8 +63,7 @@ export function Diagnostics() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if ((e.target as HTMLElement)?.closest('input, textarea, select, button, dialog, [contenteditable="true"]')) return
       if (e.key === 'd' && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault()
         setOpen((o) => !o)
@@ -104,6 +104,7 @@ export function Diagnostics() {
       </div>
 
       <div className="diag-sec">LISTENING</div>
+      <Row k="language" v={v.language ?? '—'} />
       <Row k="recogniser" v={v.running ? 'running' : 'STOPPED'} bad={!v.running} />
       <Row k="sessions" v={String(v.sessions ?? 0)} />
       <Row

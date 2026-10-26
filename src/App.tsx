@@ -4,6 +4,9 @@ import { Hud } from './ui/Hud'
 import { Boot } from './ui/Boot'
 import { Ignition } from './ui/Ignition'
 import { Diagnostics } from './ui/Diagnostics'
+import { CommandDock } from './ui/CommandDock'
+import { useSettings, type VoiceSettings } from './lib/settings'
+import { Controls } from './ui/Controls'
 import { useStore } from './store'
 import { startVoice, type Voice, type VoiceMode } from './lib/voice'
 import { createSpeaker, cycleVoice, currentVoiceName } from './lib/tts'
@@ -26,12 +29,11 @@ import {
   watchUi,
   watchConnection,
   connectedLabels,
-  usingBridge,
-  type Msg,
+  watchShortcut,
+  setVoiceReady,
 } from './lib/brain'
-import { startAnalyser, micLevel } from './lib/audio'
+import { startAnalyser, micLevel, configureMicrophone } from './lib/audio'
 import { probeCapabilities } from './lib/capabilities'
-import { env } from './config'
 
 /**
  * The conversation.
@@ -72,7 +74,6 @@ const LEADING_NAME = new RegExp(`^(?:hey|hi|ok|okay|yo)?\\s*${NAME}\\b[\\s,.:!?-
 export default function App() {
   const store = useStore
   const phase = useStore((s) => s.phase)
-  const history = useRef<Msg[]>([])
   const speaker = useRef<ReturnType<typeof createSpeaker> | null>(null)
   const voice = useRef<Voice | null>(null)
 
@@ -102,6 +103,7 @@ export default function App() {
     clearIdle()
     silence()
     turn.current++
+    interrupt()
     const s = store.getState()
     s.setCaption('')
     s.setActiveTool(null)
@@ -147,7 +149,7 @@ export default function App() {
     let filled = false
 
     try {
-      const { text } = await ask(said, history.current, {
+      await ask(said, {
         onText: (delta) => {
           if (stale()) return
           if (!started) {
@@ -184,16 +186,6 @@ export default function App() {
 
       if (stale()) return
 
-      // The bridge keeps conversation state in its own session, so history is
-      // only threaded through on the direct path.
-      if (!usingBridge) {
-        history.current.push({ role: 'user', content: said })
-        history.current.push({ role: 'assistant', content: text || '…' })
-        if (history.current.length > 16) {
-          history.current = history.current.slice(-16)
-        }
-      }
-
       await spk.end()
       if (stale()) return
       sfx.play('done')
@@ -222,6 +214,7 @@ export default function App() {
 
   /** What the voice loop should do with what it hears, derived from phase. */
   const mode = (): VoiceMode => {
+    if (store.getState().editing || (useSettings.getState().settings.reviewVoice && store.getState().draft)) return 'deaf'
     switch (store.getState().phase) {
       case 'offline':
       case 'boot':
@@ -246,7 +239,7 @@ export default function App() {
     // "Jarvis, what's happening in AI this week" in one breath. Waiting for a
     // greeting he didn't need is the most common way an assistant wastes time.
     if (trailing) {
-      void respond(trailing)
+      acceptVoice(trailing)
       return
     }
 
@@ -305,7 +298,56 @@ export default function App() {
       return
     }
 
+    acceptVoice(said)
+  }
+
+  const submitCommand = (text: string) => {
+    const said = text.trim()
+    if (!said) return
+    onSpeechStart()
+    store.getState().setEditing(false)
+    store.getState().setDraft('')
+    store.getState().setCaption('')
+    store.getState().setError(null)
     void respond(said)
+  }
+
+  const acceptVoice = (text: string) => {
+    if (useSettings.getState().settings.reviewVoice) {
+      clearIdle()
+      silence()
+      store.getState().setDraft(text)
+      store.getState().setCaption('')
+      store.getState().setPhase('listening')
+    } else submitCommand(text)
+  }
+
+  const talk = () => {
+    if (['offline', 'boot'].includes(store.getState().phase)) return
+    store.getState().setDraft('')
+    store.getState().setEditing(false)
+    onSpeechStart()
+    listen(AWAIT_SPEECH_MS)
+  }
+
+  const applyMicrophone = async (settings: VoiceSettings) => {
+    const previous = useSettings.getState().settings
+    voice.current?.stop()
+    voice.current = null
+    setVoiceReady(false)
+    goDormant()
+    try {
+      await configureMicrophone(settings)
+      useSettings.getState().save(settings)
+    } catch (err) {
+      // Reopen the previous input if a selected device vanished or settings could not be saved.
+      await configureMicrophone(previous).catch(() => {})
+      throw err
+    } finally {
+      await startAnalyser().catch(() => {})
+      voice.current = await startVoice({ mode, onWake, onSpeechStart, onPartial, onUtterance, onError: onVoiceError })
+      setVoiceReady(true)
+    }
   }
 
   const onPartial = (text: string) => {
@@ -463,12 +505,6 @@ export default function App() {
     })
     const warming = warm().catch((err: Error) => s.setError(err.message))
 
-    if (!usingBridge && !env.anthropicKey) {
-      s.setError(
-        'No Anthropic API key — copy .env.example to .env.local and set VITE_ANTHROPIC_API_KEY.',
-      )
-    }
-
     // Pull the neural voice down during the boot sequence so the first
     // "Hey Jarvis" isn't waiting on an 86MB download. Deliberately not awaited
     // — if it's slow, JARVIS comes up on the system voice and swaps over the
@@ -496,16 +532,12 @@ export default function App() {
     store.getState().setConnected(connectedLabels())
     store.getState().setVoice(currentVoiceName())
 
-    // The analyser is what makes the reactor pulse with your voice. It needs a
-    // getUserMedia stream; speech recognition does not, and gets its own. So a
-    // failure here costs the animation and nothing else — saying "voice input
-    // is unavailable" was both alarming and untrue.
+    // The meter and modern Chrome speech recognition share the selected input.
     try {
       await startAnalyser()
     } catch {
       console.warn(
-        '[jarvis] no microphone stream — the reactor will not pulse with your ' +
-          'voice. Speech recognition is unaffected.',
+        '[jarvis] microphone meter unavailable; voice startup will report input errors.',
       )
     }
 
@@ -525,6 +557,7 @@ export default function App() {
     })
 
     store.getState().setPhase('dormant')
+    setVoiceReady(true)
   }
 
   // -- clap to start --------------------------------------------------------
@@ -562,6 +595,17 @@ export default function App() {
 
   useEffect(() => {
     let raf = 0
+    watchShortcut(() => {
+      const s = store.getState()
+      if (s.phase === 'offline' || s.phase === 'boot') return
+      if (s.editing) { s.setError('Finish editing the command in Jarvis before using the shortcut.'); return }
+      if (useSettings.getState().settings.reviewVoice && s.draft.trim()) submitCommand(s.draft)
+      else talk()
+    })
+    const active = () => {
+      if (!document.hidden && !['offline', 'boot'].includes(store.getState().phase)) setVoiceReady(true)
+    }
+    window.addEventListener('focus', active)
 
     const pump = () => {
       const st = store.getState()
@@ -577,8 +621,12 @@ export default function App() {
     pump()
 
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if (e.key === 'Escape' && store.getState().phase !== 'offline') {
+        goDormant()
+        // Let native dialogs also close, even when focus is in a form control.
+        return
+      }
+      if ((e.target as HTMLElement)?.closest('input, textarea, select, button, dialog, [contenteditable="true"]')) return
 
       // V auditions the next British voice installed on this machine. Which
       // ones exist varies per Mac, so hearing them beats trusting a ranking.
@@ -651,14 +699,6 @@ export default function App() {
         return
       }
 
-      // Escape stands the whole thing down — the one thing the old build had
-      // no key for at all.
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        if (store.getState().phase !== 'offline') goDormant()
-        return
-      }
-
       // Space starts a turn without the wake word. Worth using while filming so
       // a missed wake word doesn't cost a take.
       if (e.code !== 'Space' || e.repeat) return
@@ -684,6 +724,8 @@ export default function App() {
 
     return () => {
       cancelAnimationFrame(raf)
+      setVoiceReady(false)
+      window.removeEventListener('focus', active)
       window.removeEventListener('keydown', onKey)
       clearIdle()
       if (voicePoll.current) clearInterval(voicePoll.current)
@@ -701,6 +743,8 @@ export default function App() {
       <Hud />
       <Boot />
       <Diagnostics />
+      <CommandDock onSend={submitCommand} onTalk={talk} onStop={goDormant} onSettings={() => window.dispatchEvent(new Event('jarvis:controls'))} />
+      <Controls onApplyMicrophone={applyMicrophone} onRun={submitCommand} />
       <Ignition onStart={() => void powerOn()} />
     </>
   )

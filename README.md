@@ -1,315 +1,349 @@
 # J.A.R.V.I.S.
 
-A browser voice assistant with an Iron Man holographic interface. Say
-**"Hey Jarvis"**, he wakes, listens, and does real things through your tools —
-searches the web, generates images, drives your phone, reads your mail. The face
-is a web page (React + Vite + Three.js + custom GLSL). The brain is Claude Code,
-run headless as a library.
-
-**The only subscription you need is Claude Code.** No API keys, no OpenAI
-account, no cloud bill — the brain runs on your existing Claude Code login, and
-the heavy work (the model itself) runs on Anthropic's servers, so even a low-end
-laptop only has to draw the interface. **ElevenLabs is an optional add-on** that
-gives JARVIS a much better voice and sharper hearing; without it he speaks and
-listens through the browser's own speech, and everything still works.
-
----
+A browser voice assistant with an Iron Man-style interface. The browser owns the
+wake word, microphone, speech-to-text, streaming speech, and visuals. A local
+Node bridge keeps the AshnaAI key off the browser and calls AshnaAI's
+OpenAI-compatible Chat Completions API.
 
 ## Requirements
 
-**In one line:** a Claude Code subscription, plus two free things every computer
-can have — Node.js and Chrome. That's the whole list.
+- Node.js 20.12 or newer
+- Chrome or Edge in a real browser window (embedded previews may block the mic)
+- An AshnaAI API key from [Account → API](https://app.ashna.ai)
+- Optional: an ElevenLabs API key for higher-quality speech and transcription
+- Optional: the Claude for Chrome extension for the existing signed-in browser
+  page-reading/clicking tools (the current socket adapter targets macOS/Linux).
+  Opening Chrome tabs and websites on Windows does not need this extension.
 
-- **Claude Code, installed and logged in** — this is the only account you need.
-  Install it with the official method — `npm install -g @anthropic-ai/claude-code`,
-  or the platform installer at <https://docs.claude.com/en/docs/claude-code> —
-  then run `claude` once and complete login. The bridge reuses that login. **No
-  API key**, and usage is billed to your existing Claude account.
-- **Node.js 20 or newer** — free, one installer from <https://nodejs.org>. This
-  is a Node web app, so it is the one unavoidable tool.
-- **Google Chrome or Microsoft Edge**, in a **real browser window** — not an
-  embedded preview pane. Preview panes (including the one inside editors and
-  Claude Code) block microphone access, so the page loads and looks right but
-  never hears you. JARVIS also needs WebGL, which these browsers provide.
-- **Optional: an ElevenLabs API key** — a good add-on, not a requirement. It
-  gives a better voice and sharper transcription; the free tier is plenty for a
-  demo. Without it, everything runs on the browser's own speech.
+## Windows PowerShell quick start
 
-Run `npm run setup` after cloning and it checks all of this for you, in plain
-language.
-
----
-
-## Quick start
-
-First, install, then start it:
-
-```bash
+```powershell
 npm install
-npm start          # runs the brain and the face together
+Copy-Item .env.example .env.local
+notepad .env.local
 ```
 
-Then open the URL it prints (http://localhost:5173) in **Chrome**, click **INITIALISE**, and say **“Hey Jarvis”**.
+Set `ASHNA_API_KEY` in `.env.local`, then run:
 
-Prefer two terminals? Run them separately instead:
-
-```bash
-npm install
+```powershell
+npm run setup
+npm start
 ```
 
-Terminal 1 — the brain:
+Open <http://localhost:5173> in Chrome or Edge, click **INITIALISE**, allow the
+microphone, and say **"Hey Jarvis"**. `npm start` launches both the bridge and
+Vite. To run them separately:
 
-```bash
+```powershell
 npm run bridge
-```
-
-Terminal 2 — the face:
-
-```bash
+# In another terminal:
 npm run dev
 ```
 
-Then open the app in a **real Chrome or Edge window**:
+You can also keep the key out of files for the current PowerShell session:
 
-```bash
-open http://localhost:5173
+```powershell
+$env:ASHNA_API_KEY = 'your_key'
+npm start
 ```
 
-Click **INITIALISE**, allow the microphone when asked, and say **"Hey Jarvis"**.
+Do not prefix the key with `VITE_`; only the Node bridge may read it.
 
-> It has to be a real browser window. Embedded preview panes block the
-> microphone, so JARVIS will look perfectly alive and simply never respond.
+## AshnaAI configuration
 
----
+The bridge posts streaming requests to
+`https://api.ashna.ai/v1/api/chat/completions`. The default model is the
+documented foundation model `gpt-4o-mini`. Change it in `.env.local`:
+
+```dotenv
+ASHNA_MODEL=glm-5.3-flash
+```
+
+Use a current foundation model ID from the
+[AshnaAI API documentation](https://www.ashna.ai/api-docs). Ashna custom-agent
+IDs are not a substitute for bridge tools: their server-side tools do not pass
+through `decideTool()` and are therefore unsupported by this security model.
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `ASHNA_API_KEY` | required | Server-only bearer token |
+| `ASHNA_MODEL` | `gpt-4o-mini` | Ashna foundation model ID |
+| `ASHNA_TIMEOUT_MS` | `120000` | Maximum time for one API stream |
+| `ASHNA_MAX_CONTEXT_MESSAGES` | `20` | Per-WebSocket history limit |
+| `JARVIS_BRIDGE_PORT` | `8787` | WebSocket and HTTP bridge port |
+| `JARVIS_ALLOW_WRITES` | off | Enables Windows app/media controls and effectful browser tools |
+| `JARVIS_ALLOW_COMPUTER` | off | Enables Windows PowerShell, screenshots, mouse/keyboard and existing write tools |
+| `JARVIS_CHROME_PATH` | auto-detected | Chrome executable when installed outside the usual location |
+| `JARVIS_GLOBAL_HOTKEY` | enabled on Windows | Set to `0` to disable Ctrl+Alt+J |
+| `JARVIS_STT_LANGUAGE` | `en` | Scribe fallback language when a client does not send its selected language |
+| `VITE_SPEECH_LANGUAGE` | `en-US` | Browser speech recognition language; e.g. `en-GB` |
+| `VITE_SPEECH_PAUSE_MS` | `1100` | End-of-speech silence, 600–3000 ms |
+| `JARVIS_ALLOWED_ORIGINS` | local Vite ports | Extra accepted origins |
+| `JARVIS_ALLOW_NO_ORIGIN` | off | Allows clients without an Origin header |
+| `JARVIS_FILE_ROOTS` | — | Extra roots exposed by `/file` |
+| `ELEVENLABS_API_KEY` | — | Optional TTS and STT |
+| `JARVIS_VOICE_ID` | George | ElevenLabs voice |
+| `VITE_BRIDGE_URL` | `ws://localhost:8787` | Browser-to-bridge URL |
+| `VITE_TTS_ENGINE` | `system` | `system` or `kokoro` |
+| `VITE_PICOVOICE_ACCESS_KEY` | — | Optional offline wake word |
+
+The key is read from the process environment, `.env`, or `.env.local`. It is
+never included in a browser bundle, WebSocket frame, or normal bridge log.
 
 ## How it works
 
-JARVIS is two processes. The browser is the face and the voice; the bridge is
-the brain and the hands.
-
-```
-  ┌─ browser (the face) ───────────────┐        ┌─ bridge (the brain) ─────────────┐
-  │  "Hey Jarvis" wake word            │        │  Node · bridge/server.mjs        │
-  │  local VAD  →  speech to text      │   ws   │  Claude Agent SDK                │
-  │  reactor UI (Three.js + GLSL)      │◄─────► │   = Claude Code, headless        │
-  │  text to speech                    │  8787  │  spawns your MCP servers         │
-  │  heads-up display                  │        │  permission gate (decideTool)    │
-  └────────────────────────────────────┘        └──────────────────────────────────┘
+```text
+browser                                              local bridge
+wake word → mic → STT → {type:"ask"}  ── WebSocket ─► session history
+streaming TTS/UI  ◄── text/tool/done/error frames ── Ashna SSE + tool loop
+                                                     decideTool permission gate
 ```
 
-Everything you see and hear happens in the browser. The bridge is a single Node
-process (`bridge/server.mjs`) that runs the **Claude Agent SDK**
-(`@anthropic-ai/claude-agent-sdk`) — this spawns the real `claude` CLI as a child
-process, so **the brain literally is Claude Code, headless.** They talk over a
-WebSocket (plus a few HTTP endpoints) on `ws://localhost:8787`.
+Each WebSocket connection owns one bounded conversation. The bridge sends
+`system + retained history + user` to AshnaAI, parses partial SSE chunks, emits
+text deltas immediately, executes approved function calls, and sends tool
+results back for the next model step. `data: [DONE]` completes a request.
+Disconnecting clears that connection's history.
 
-**Why a bridge at all?** A browser tab cannot spawn the local stdio MCP servers —
-`higgsfield`, `elevenlabs`, `android`, `playwright`, `exa`, `serper`, and the
-rest. The bridge can. And because it is the Agent SDK, it authenticates off your
-existing Claude Code login: no API key, billed to that same Claude account.
+An `interrupt` frame aborts the active HTTP request. A newer question also
+aborts a still-running older one. Network truncation, timeout, invalid key,
+unavailable model, and rate-limit responses become the existing frontend
+`error` frame; the bearer token is redacted and never logged.
 
-**The model.** `claude-opus-5` at effort `medium` by default. Override with the
-`JARVIS_MODEL` and `JARVIS_EFFORT` environment variables. On startup the bridge
-prints its choice, e.g. `[jarvis] model claude-opus-5 · effort medium`.
+The voice pipeline:
 
-### The voice pipeline
+- Local VAD provides barge-in.
+- ElevenLabs Scribe v2 is used through `/stt` when `ELEVENLABS_API_KEY` exists;
+  otherwise Chrome/Edge speech recognition is used.
+- ElevenLabs TTS is used through `/tts` when configured; otherwise browser
+  `speechSynthesis` or optional Kokoro is used.
+- Text is spoken sentence-by-sentence as Ashna SSE deltas arrive.
+- Browser interim transcripts are captions only. Commands wait for final words
+  and a quiet gap, including commands spoken in the same breath as "Hey Jarvis".
+- Microphone level updates render only the small signal meter; the 3D scene
+  caps pixel density, lowers it on slow hardware, and pauses drawing when hidden.
 
-The loop is designed so that nothing silently dies and barge-in feels natural.
+## Tools and permissions
 
-- **Detection is local.** An energy-based voice-activity detector
-  (`src/lib/vad.ts`) decides when you are speaking. It is instant, cannot quietly
-  fail, and is what makes **barge-in** work — speak while JARVIS is talking and he
-  stops.
-- **Transcription has two tiers, chosen automatically at boot.** The browser asks
-  the bridge `/health` and picks the best available:
-  - **ElevenLabs key present** → ElevenLabs Scribe, via the bridge `/stt` endpoint.
-  - **Nothing configured** → the browser's own `SpeechRecognition` (Chrome/Edge),
-    guarded by a heartbeat so it recovers when Chrome throttles it.
-- **Speaking** uses the **ElevenLabs voice when a key is present**, and the
-  browser's `speechSynthesis` otherwise. If a cloud call fails it falls back to
-  the browser voice, and if the OS voice itself is broken it latches over to the
-  cloud voice.
+Ashna receives only tools explicitly registered by this bridge:
 
-So it works with no keys and auto-upgrades when a key appears — there is no flag
-to set. Capability detection lives in `src/lib/capabilities.ts`, which probes the
-bridge's `GET /health` (returning `{ ok, tts, stt }`, both tracking the
-ElevenLabs key) once at boot and picks the engines.
+- `jarvis`: heads-up panels, blades, and URL probing
+- `jarvis_ui`: theme, reactor, orbit, chrome, effects, reset
+- `jarvis_eyes`: user-requested camera capture
+- `jarvis_chrome`: existing Chrome-extension reading tools; click/type/form
+  actions are registered only when writes are enabled. New tabs and HTTP(S)
+  sites also work through native Chrome launch without the extension.
+- `jarvis_desktop`: Windows app launch, volume/media keys, show/restore desktop;
+  registered only on Windows with writes enabled
+- `jarvis_computer`: PowerShell execution, foreground-window screenshots and
+  mouse/keyboard input; registered only on Windows with computer control enabled
 
----
+Every returned tool call passes through `decideTool()`. The default permits
+reading and opening browser tabs. `JARVIS_ALLOW_WRITES=1` alone does not register
+the general shell or mouse/keyboard tools. Computer control is a separate opt-in.
 
-## What JARVIS can do
+To enable the registered browser action tools:
 
-Beyond answering, JARVIS reaches every MCP server in your Claude Code
-configuration, and can drive his own interface.
+```powershell
+npm run bridge:writes
+# or both processes:
+npm start -- --writes
+```
 
-### Your tools
+### Windows voice commands
 
-Every server in your `~/.claude.json` is handed to the SDK explicitly. Depending
-on what you have installed, that is roughly:
+Say "Hey Jarvis" followed by one of these. During a follow-up, the name is optional.
 
-- **Web & search** — `exa`, `serper`, `serpapi`
-- **Images & video** — `higgsfield`, `openrouter-image`, `palmier-pro`
-- **Voice** — `elevenlabs`
-- **Your phone** — `android`
-- **The browser** — `playwright`
+| Command | Action |
+|---|---|
+| `open YouTube` / `open Instagram` / `open Google` | New tab in installed Chrome |
+| `open a new tab` / `new tab` | Blank Chrome tab |
+| `open calculator` / `open notepad` / `open file explorer` | Windows app |
+| `open settings` / `open paint` / `open task manager` | Windows app |
+| `volume up` / `volume down` | One volume step |
+| `toggle mute` / `toggle playback` | Toggle mute or media playback |
+| `next track` / `previous track` | Media key |
+| `show desktop` / `restore windows` | Minimize / restore windows |
+| `search youtube for Daft Punk` | Open YouTube search results |
+| `next tab` / `previous tab` / `close this tab` | Control the most recently active Chrome window |
+| `play video` / `pause video` | Play/pause the selected YouTube video |
+| `list windows` / `switch to Notepad` | List windows / focus one unambiguous app or title |
+| `minimize window` / `maximize window` / `restore window` | Change the foreground window |
+| `snap left window` / `snap right window` | Arrange the foreground window on its monitor |
+| `work mode` | Run the saved example: Google, then Notepad |
 
-A few things you can say:
+These exact commands run locally without an Ashna request; other phrasing goes
+through the model. Windows app and media commands require `--writes` or
+`JARVIS_ALLOW_WRITES=1` in `.env.local`. Restart the bridge after changing it.
+Native Chrome launch reports that opening was requested. Windows tab and
+YouTube controls use the included PowerShell helper, without an extension.
+Playback requires a selected video tab with English Chrome/YouTube accessibility
+labels; it checks the address and player state before invoking Play/Pause.
+Tab closing refuses to close the Jarvis tab. If Windows refuses focus, select
+the intended window yourself and retry. General page reading/clicking still
+requires the existing extension adapter. Desktop actions are limited to the
+listed apps and controls unless computer control is explicitly enabled below.
 
-- *"What's happening in AI this week?"*
-- *"Generate an image of the Mark VII suit."*
-- *"Take a screenshot of my phone."*
-- *"Open my GitHub notifications."*
+### Terminal and desktop work (Windows)
 
-> **Note on account connectors.** Servers you added through your **claude.ai
-> account** are not stored on disk, so the bridge cannot see them — it works from
-> the servers in `~/.claude.json` (about 14), not the claude.ai ones.
+```powershell
+npm start -- --computer
+# Or just the bridge:
+npm run bridge -- --computer
+```
 
-### JARVIS controls the interface
+Alternatively set `JARVIS_ALLOW_COMPUTER=1` in `.env.local` and restart. This also
+enables existing app/window/browser actions. Controls reports whether it is on.
+No extra dependency is needed. Use a vision-capable Ashna foundation model for
+desktop screenshots; actual image support depends on the configured provider/model.
 
-He drives the UI through MCP tools the bridge exposes:
+Examples to type or say:
 
-- `ui_theme` — accent, background, per-phase colours
-- `ui_reactor` — colour, scale, intensity, spin, and style (`ring` | `sphere` | `wire`), visibility
-- `ui_orbit` — put images in orbit around the reactor
-- `ui_chrome` — show or hide rails, transcript, badges
-- `ui_effect` — `glitch` | `pulse` | `scan` | `shake` | `flash`
-- `ui_screen` — clear
-- `ui_reset` — back to defaults
+- "Use PowerShell to show the Node version and list this project's files."
+- "Open Notepad and type Hello from Jarvis, then check the result."
+- "Look at the active window and tell me what is on screen."
 
-So *"make it red, hide the systems list, put that render in orbit"* is a spoken
-command.
+For an exact command without an AI request, type `powershell: Get-Location` in
+the command field. The response contains stdout, stderr, exitCode and whether
+execution stopped early. Natural-language commands use the existing AI tool loop.
 
-### The heads-up display
+PowerShell runs in a fresh hidden, noninteractive process for each call. The
+default working directory is the Jarvis launch folder; the model can set `cwd`.
+The timeout defaults to 30 seconds, with a 60-second maximum. Output is bounded;
+interactive programs and persistent/background servers are not supported.
 
-JARVIS authors panels with a `display` tool against a fixed `.hud-*` design
-system. The browser sanitises the markup (DOMPurify, a class allowlist and a
-strict CSP) before rendering. Rich media works — images, `<video>`, and
-YouTube/Vimeo embeds. Remote images and video are fetched **server-side** through
-the bridge (`/img` and `/media`, both SSRF-guarded), so hotlink-blocked news
-thumbnails still appear and the page never beacons your IP to a host the model
-chose.
+Desktop control captures the foreground window, scales the image to at most
+1600 pixels on its longest side and uses coordinates relative to that image.
+Each screenshot is valid for one input action for up to 60 seconds. Input refuses
+changed focus or window geometry; clicks also refuse points covered by another
+window. Supported input: left/right/double click, scroll, Unicode text and common
+keys/shortcuts. Capture again after each action to check the result. This is not
+a guarantee against an app changing its contents between capture and input.
+Windows can block input into elevated apps; secure/UAC screens are unsupported.
 
----
+**Stop** ends the current task; Escape in the Jarvis page, Ctrl+Alt+J from another
+app (when the global shortcut is available), and barge-in also
+interrupt it. A running command is stopped with its process tree, and no further
+model tools are started. Completed changes cannot be undone by Stop. Processes
+that have already detached from an exited parent cannot reliably be stopped.
+
+Computer control runs with your Windows account permissions. `cwd` is not a
+sandbox: commands can read/write files outside that folder. Screen images and
+natural-language tool results are sent to AshnaAI. The bridge removes common
+secret environment variables from child processes, but this does not prevent
+commands from reading local credential files. Enable this mode for trusted tasks.
+
+Implementation references: [Windows SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput)
+and [Node child processes](https://nodejs.org/api/child_process.html).
+
+If PowerShell blocks `npm.ps1`, use `npm.cmd start` (and `npm.cmd test`, etc.).
+
+### MCP migration limitation
+
+The previous Claude Agent SDK automatically launched servers from
+`~/.claude.json`. Ashna Chat Completions does not connect to those local stdio
+MCP servers, and this bridge deliberately does not claim they are available.
+Existing `exa`, `higgsfield`, `android`, `playwright`, and similar MCP
+integrations therefore no longer work unless they are explicitly adapted and
+registered in the bridge. The built-in UI, camera, media proxy, voice endpoints,
+and optional Chrome-extension tools remain available.
 
 ## Controls
 
-| Key / phrase | Does |
+| Key or phrase | Action |
 |---|---|
-| **"Hey Jarvis"** | Wake him |
+| **Hey Jarvis** | Wake |
 | **Space** | Talk without the wake word |
-| Just speak | Interrupt him mid-sentence (barge-in) |
-| **V** | Cycle the browser voice |
+| **Ctrl+Alt+J** | Talk from another Windows app (Jarvis must be initialised and open) |
+| Speak while answering | Interrupt |
+| **V** | Cycle browser voice |
 | **Escape** | Stand down |
-| **D** | Live diagnostics panel |
-| **T** | One-line audio self-test |
+| **D** | Diagnostics |
+| **T** | Audio self-test |
 
----
+After initialising, use the command field to type and press **Send**. Turn on
+**Review voice commands before sending** to edit recognised words before any
+command runs. **Send** submits the draft; **Clear** discards it. Ctrl+Alt+J
+also submits a pending voice draft when you are not editing it.
 
-## The boot sequence
+Open **Controls** for:
 
-Power-up plays a four-beat Iron Man start-up (`src/ui/Boot.tsx`): an
-"INITIATING SYSTEM" status bar with a segmented progress bar and boot log; then
-concentric reticle rings resolving into "J.A.R.V.I.S"; then a suit schematic;
-then the triangular arc reactor lighting up — with a start-up sound under it
-(`public/audio/boot-music.mp3`).
+- A microphone selector, English US/UK or Mongolian recognition, pause duration,
+  noise suppression and automatic gain. Save restarts voice input. Settings are
+  stored in this browser. Selecting a specific input for browser speech requires
+  desktop Chrome/Edge 135+; older browsers can use the system default.
+- An input meter and a three-second room-noise check. Save the chosen microphone
+  first, stay quiet for the check, then compare the meter while speaking. These
+  are relative levels after audio processing, not calibrated decibels.
+- An explicit window list with switch, minimize, maximize, restore and left/right
+  half buttons. Refresh if an app was opened or closed.
+- Custom command names with one supported local command per line (up to 8).
+  Save, then say the name or click its saved button. Commands live in
+  `jarvis-routines.local.json`, excluded from Git. All steps are validated before
+  execution; a failure or interruption stops subsequent steps. Completed steps
+  are not undone. Scripts, arbitrary shell commands and nested routines are not
+  accepted.
 
----
+Ctrl+Alt+J is registered only while the bridge is running and targets the most
+recently focused, initialised Jarvis tab. The Controls panel reports if another
+app owns the shortcut. Set `JARVIS_GLOBAL_HOTKEY=0` and restart to disable it.
 
-## Configuration
+## Validation
 
-Everything is optional in bridge mode. Frontend settings live in `.env.local`
-(copy `.env.example`); bridge settings are environment variables.
-
-### Bridge
-
-| Variable | Default | Effect |
-|---|---|---|
-| `JARVIS_BRIDGE_PORT` | `8787` | Port for the WebSocket + HTTP endpoints |
-| `JARVIS_MODEL` | `claude-opus-5` | Model to run |
-| `JARVIS_EFFORT` | `medium` | Reasoning effort |
-| `JARVIS_ALLOW_WRITES` | off | `1` allows effectful tools (see below) |
-| `JARVIS_ALLOWED_ORIGINS` | local dev | Extra WebSocket origins to accept |
-| `JARVIS_ALLOW_NO_ORIGIN` | off | Accept connections with no `Origin` header |
-| `JARVIS_FILE_ROOTS` | — | Roots the `/file` endpoint may serve from |
-| `JARVIS_VOICE_ID` | — | ElevenLabs voice id |
-| `ELEVENLABS_API_KEY` | — | Optional; enables the ElevenLabs voice + Scribe |
-
-### Frontend (`.env.local`)
-
-| Variable | Effect |
-|---|---|
-| `VITE_BACKEND` | `bridge` (default) or `direct` |
-| `VITE_BRIDGE_URL` | Where to reach the bridge |
-| `VITE_TTS_ENGINE` | `system` or `kokoro` |
-| `VITE_KOKORO_VOICE` | Voice for the Kokoro engine |
-| `VITE_USE_ELEVENLABS` | Force the ElevenLabs voice on |
-| `VITE_ANTHROPIC_API_KEY` | Direct mode only |
-
-### Adding an ElevenLabs key
-
-You do not have to touch a flag. Either:
-
-- Set `ELEVENLABS_API_KEY` on the bridge before starting it, **or**
-- Add the key to your `elevenlabs` MCP server's env in `~/.claude.json` — the
-  bridge reads it from there too.
-
-Either way, `/health` starts reporting the capability, the browser picks it up on
-the next boot, and both the voice and transcription upgrade automatically.
-
----
-
-## Enabling actions
-
-The tool gate starts **read-only**. Search, generation and lookups run freely;
-anything effectful — send, tap, delete, install, pay — is denied. Voice is a poor
-interface for a confirmation dialog, so the decision is made ahead of time in
-`decideTool()` in `bridge/server.mjs`, not at the moment of use. The bridge sets
-`settingSources: []`, which makes its own gate the only authority — filesystem
-settings and any global `bypassPermissions` cannot override it.
-
-To allow effectful tools (phone, browser driving, sending), run the bridge this
-way instead:
-
-```bash
-npm run bridge:writes
+```powershell
+npm test
+npm run lint
+npm run build
 ```
 
-> Read `decideTool()` before you do. *"Hey Jarvis, clean up my downloads folder"*
-> means something rather different with writes enabled.
+Tests use a local mock HTTP server; no real API key is required.
+The computer tests also execute harmless local PowerShell commands. To check
+real screenshot/click/type behavior with a disposable Windows form, run this
+from an interactive desktop session and focus the test window if prompted:
 
----
+```powershell
+$env:JARVIS_COMPUTER_SMOKE = '1'
+node --test --test-name-pattern='native desktop' test/computer.test.mjs
+Remove-Item Env:JARVIS_COMPUTER_SMOKE
+```
 
 ## Troubleshooting
 
-**I can't hear him, or he can't hear me.** Press **D** for the diagnostics panel
-— it states plainly whether he is hearing you and whether he is producing sound.
-Press **T** for a one-line audio self-test.
+**Missing or invalid key:** run `npm run setup`, then check that
+`ASHNA_API_KEY` is in the same PowerShell environment, `.env`, or
+`.env.local` used to start the bridge.
 
-**No voice at all.** You must be in **Chrome or Edge**, in a **real browser
-window** (not an embedded preview), and you must have **allowed the microphone**.
+**Model denied or missing:** choose an ID currently listed in the Ashna docs and
+available to the key, then restart the bridge after changing `ASHNA_MODEL`.
 
-**Bridge not reachable.** Check that `npm run bridge` is still running in its
-terminal, and that nothing else is holding port `8787`.
+**Rate limited:** wait and retry, or use a model/quota available to the account.
 
----
+**Bridge unreachable:** confirm `npm run bridge` is running and port `8787`
+is free. Custom frontend origins must be added to
+`JARVIS_ALLOWED_ORIGINS`.
+
+**No microphone:** use a real Chrome/Edge window and grant microphone access.
+
+**Wrong or cut-off words:** the default recognizer uses `en-US`. Open **Controls**
+to select English (UK) or increase the pause to 1600 ms, then save. The
+`VITE_SPEECH_LANGUAGE` / `VITE_SPEECH_PAUSE_MS` variables set initial defaults;
+saved browser settings take precedence. Press **D** to see the language and
+last transcript. Browser recognition needs an internet connection; optional
+ElevenLabs transcription needs `ELEVENLABS_API_KEY`. Real microphone accuracy
+still depends on the recognizer, room noise and microphone position.
+
+Implementation references: [final speech results](https://developer.mozilla.org/en-US/docs/Web/API/SpeechRecognitionResult/isFinal),
+[Scribe transcription options](https://elevenlabs.io/docs/api-reference/speech-to-text/convert),
+and [adaptive rendering](https://r3f.docs.pmnd.rs/advanced/scaling-performance).
+Selected audio tracks: [SpeechRecognition.start](https://developer.mozilla.org/en-US/docs/Web/API/SpeechRecognition/start).
+Global shortcut: [Windows RegisterHotKey](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey).
 
 ## Security
 
-All of this lives in `bridge/server.mjs`:
-
-- The WebSocket accepts only local dev origins (add more with
-  `JARVIS_ALLOWED_ORIGINS`).
-- `/file`, `/img` and `/media` validate the scheme, confine to allowed roots,
-  resolve the real path, and refuse private and loopback addresses (SSRF guard).
-- The tool gate (`decideTool`) is default-deny for effectful MCP tools.
-- A strict CSP in `index.html`; model-authored panel HTML is sanitised.
-
----
-
-## Credits & licence
+- The bridge binds to loopback; the WebSocket accepts local development origins by default.
+- `/file`, `/img`, and `/media` enforce roots and SSRF checks.
+- Model-authored panel HTML is sanitized under a strict CSP.
+- Ashna credentials remain server-side.
+- Effectful tools are absent or denied unless explicitly enabled.
 
 MIT.
-
-The boot sound and any tracks in `public/audio/` ship with the project for the
-demo. If you go on to monetise something built on this, clearing the rights to
-that audio is your responsibility.

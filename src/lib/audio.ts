@@ -4,33 +4,63 @@
  * the earlier stream, so everything that needs audio goes through here.
  */
 
+import { useSettings, type VoiceSettings } from './settings'
+
 let stream: MediaStream | null = null
+let opening: Promise<MediaStream> | null = null
 let ctx: AudioContext | null = null
 let analyser: AnalyserNode | null = null
 let buf: Uint8Array | null = null
+let wave: Float32Array<ArrayBuffer> | null = null
+
+function capture(settings: VoiceSettings) {
+  return navigator.mediaDevices.getUserMedia({ audio: {
+    deviceId: settings.deviceId === 'default' ? undefined : { exact: settings.deviceId },
+    echoCancellation: true,
+    noiseSuppression: settings.noiseSuppression,
+    autoGainControl: settings.autoGainControl,
+  } })
+}
+
+export async function configureMicrophone(settings: VoiceSettings): Promise<void> {
+  if (opening) await opening
+  const next = await capture(settings)
+  const previous = stream
+  stream = next
+  previous?.getTracks().forEach((track) => track.stop())
+  if (ctx) await ctx.close()
+  ctx = null
+  analyser = null
+  buf = null
+  wave = null
+}
 
 export async function getMic(): Promise<MediaStream> {
-  if (stream) return stream
-  stream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-    },
-  })
-  return stream
+  if (stream?.getAudioTracks().some((track) => track.readyState === 'live')) return stream
+  if (opening) return opening
+  opening = capture(useSettings.getState().settings).then((value) => (stream = value)).finally(() => { opening = null })
+  return opening
 }
 
 export async function startAnalyser(): Promise<void> {
   if (analyser) return
   const s = await getMic()
   ctx = new AudioContext()
+  await ctx.resume()
   const src = ctx.createMediaStreamSource(s)
   analyser = ctx.createAnalyser()
   analyser.fftSize = 512
   analyser.smoothingTimeConstant = 0.75
   src.connect(analyser)
   buf = new Uint8Array(analyser.frequencyBinCount)
+  wave = new Float32Array(analyser.fftSize)
+}
+
+/** Unscaled microphone energy for the input check (0..1 RMS). */
+export function micRms(): number {
+  if (!analyser || !wave) return 0
+  analyser.getFloatTimeDomainData(wave)
+  return Math.sqrt(wave.reduce((sum, sample) => sum + sample * sample, 0) / wave.length)
 }
 
 /** 0..1 loudness. Returns 0 before the analyser is up. */

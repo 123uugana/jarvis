@@ -1,4 +1,5 @@
-import { BRIDGE_HTTP_URL } from '../config'
+import { BRIDGE_HTTP_URL, SPEECH_LANGUAGE } from '../config'
+import { useSettings } from './settings'
 import { getMic } from './audio'
 import { speakingNow, speakingSince } from './tts'
 import { startVad, type Vad } from './vad'
@@ -19,9 +20,9 @@ import { caps } from './capabilities'
  * restart leaves a quarter-second of deafness that eats whole wake words.
  *
  * Keeping the mic open costs one thing: JARVIS hears himself through the
- * speakers. That is handled here in text rather than in acoustics — see
- * `isEcho` — because the browser gives SpeechRecognition its own capture and
- * won't let us put a canceller in front of it.
+ * speakers. The text echo filter supplements microphone echo cancellation.
+ * Desktop Chrome 135+ uses our selected track; older browsers capture their
+ * own default input and rely on the text filter.
  */
 
 export type VoiceMode =
@@ -37,7 +38,7 @@ export type VoiceMode =
 export type VoiceHandlers = {
   /** Read fresh on every result, so the app never has to re-subscribe. */
   mode: () => VoiceMode
-  /** Fired on his name, from a partial — waiting for endpointing feels slow.
+  /** Fired on his name from a final transcript.
    *  `trailing` is whatever followed it, so "Jarvis, what's the weather" is
    *  one breath rather than two turns. */
   onWake: (trailing: string) => void
@@ -175,7 +176,8 @@ function holdFor(text: string): number {
   if (CONTINUES.test(words[words.length - 1])) return CONTINUE_MS
   // One or two words is usually the start of something, not the whole of it —
   // except for the short commands that genuinely are complete.
-  if (words.length <= 2 && !OVERRIDE.test(text)) return CONTINUE_MS
+  const shortCommand = /^(?:(?:open|launch|start|close|show|restore|volume)\s+\S+|new tab)[.!?]?$/i.test(text.trim())
+  if (words.length <= 2 && !OVERRIDE.test(text) && !shortCommand) return CONTINUE_MS
   return SETTLE_MS
 }
 
@@ -186,6 +188,7 @@ type Assembler = {
   flush: () => void
   /** Throw away whatever is held — used when he stands down. */
   cancel: () => void
+  pause: () => void
   held: () => string
 }
 
@@ -224,7 +227,6 @@ function makeAssembler(h: {
       // Already talking again. Decide nothing now — the next transcript is
       // part of this same sentence and will bring more of it.
       if (active) {
-        timer = setTimeout(fire, MAX_HOLD_MS)
         return
       }
 
@@ -240,6 +242,7 @@ function makeAssembler(h: {
       timer = setTimeout(fire, wait)
     },
     flush: fire,
+    pause: clear,
     cancel() {
       clear()
       held = ''
@@ -257,7 +260,7 @@ function makeAssembler(h: {
 const norm = (s: string) =>
   s
     .toLowerCase()
-    .replace(/[^a-z0-9' ]+/g, ' ')
+    .replace(/[^\p{L}\p{N}' ]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 
@@ -332,6 +335,7 @@ function isEcho(heard: string, spoken: string): boolean {
  * apart in one glance.
  */
 export const diag = {
+  language: SPEECH_LANGUAGE,
   /** Which input engine is running: 'elevenlabs' (VAD+Scribe) or 'browser'. */
   engine: 'browser',
   /** Whether the microphone pipeline is live. */
@@ -387,8 +391,9 @@ if (typeof window !== 'undefined') {
  * rather than surfacing later as an unexplained deafness, whichever engine runs.
  */
 export async function startVoice(h: VoiceHandlers): Promise<Voice> {
+  let stream: MediaStream
   try {
-    await getMic()
+    stream = await getMic()
   } catch (err) {
     diag.lastError = 'mic'
     h.onError(
@@ -399,13 +404,16 @@ export async function startVoice(h: VoiceHandlers): Promise<Voice> {
     return { stop: () => {}, live: () => false }
   }
   diag.engine = caps().stt ? 'elevenlabs' : 'browser'
-  return caps().stt ? startElevenVoice(h) : startBrowserVoice(h)
+  diag.language = useSettings.getState().settings.language
+  return caps().stt ? startElevenVoice(h) : startBrowserVoice(h, stream)
 }
 
 /** VAD + ElevenLabs Scribe. */
 async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
   let lastWake = 0
   let vad: Vad | null = null
+  let stopped = false
+  const controller = new AbortController()
 
   /**
    * Segments waiting for the transcriber, oldest first.
@@ -429,6 +437,7 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
    */
   const assemble = makeAssembler({
     emit: (text) => {
+      if (stopped || h.mode() === 'deaf' || h.mode() === 'wake') return
       diag.dropped = ''
       diag.accepted++
       diag.holding = ''
@@ -446,23 +455,27 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
    * now, not the one they interrupted.
    */
   const transcribe = async (blob: Blob) => {
-    const mode = h.mode()
-    if (mode === 'deaf') return
+    if (stopped || h.mode() === 'deaf') return
     const t0 = performance.now()
     try {
       const res = await fetch(`${BRIDGE_HTTP_URL}/stt`, {
         method: 'POST',
-        headers: { 'content-type': blob.type || 'audio/webm' },
+        headers: { 'content-type': blob.type || 'audio/webm', 'x-speech-language': useSettings.getState().settings.language },
         body: blob,
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
       })
+      if (stopped) return
       diag.idleMs = Math.round(performance.now() - t0)
       if (!res.ok) {
         diag.restarts++
         diag.lastError = `stt ${res.status}`
         drop(`transcription failed (${res.status})`)
+        h.onError(`Speech service failed (${res.status}). Please try again.`)
         return
       }
       const { text } = (await res.json()) as { text?: string }
+      if (stopped || h.mode() === 'deaf') return
+      const mode = h.mode()
       const said = (text ?? '').trim()
       diag.lastError = ''
 
@@ -496,11 +509,13 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
 
       // Not a turn yet — a piece of one. The assembler decides when the thought
       // is finished, reading the words and whether the room is still noisy.
-      assemble.feed(said, vad?.meter().speaking ?? false)
+      assemble.feed(said, Boolean(vad?.meter().speaking || pendingAudio.length))
     } catch (err) {
+      if (stopped) return
       diag.restarts++
       diag.lastError = String(err)
       drop('could not reach the speech service')
+      h.onError('Speech service unavailable. Please try again.')
     }
   }
 
@@ -509,7 +524,7 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
     if (draining) return
     draining = true
     try {
-      while (pendingAudio.length) {
+      while (!stopped && pendingAudio.length) {
         await transcribe(pendingAudio.shift()!)
       }
     } finally {
@@ -523,6 +538,7 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
       diag.mode = mode
       diag.sessions++
       if (mode === 'deaf') return
+      assemble.pause()
       // Standing down mid-thought throws the thought away with it. Otherwise
       // held text would surface as the opening of the *next* conversation.
       if (mode === 'wake') assemble.cancel()
@@ -537,8 +553,10 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
         }
         h.onSpeechStart()
       }
+      if (mode === 'command') h.onSpeechStart()
     },
     onEnd: (blob) => {
+      if (stopped) return
       pendingAudio.push(blob)
       void drain()
     },
@@ -576,6 +594,9 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
 
   return {
     stop: () => {
+      stopped = true
+      controller.abort()
+      pendingAudio.length = 0
       clearInterval(guardPoll)
       assemble.cancel()
       vad?.stop()
@@ -599,7 +620,13 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
  * between "the wake word stopped working halfway through the lesson" and an
  * assistant that keeps listening.
  */
-function startBrowserVoice(h: VoiceHandlers): Voice {
+function startBrowserVoice(h: VoiceHandlers, stream: MediaStream): Voice {
+  const settings = useSettings.getState().settings
+  const trackInput = Number(/(?:Chrome|Chromium)\/(\d+)/.exec(navigator.userAgent)?.[1]) >= 135 && !/Android/.test(navigator.userAgent)
+  if (!trackInput && settings.deviceId !== 'default') {
+    h.onError('Using a selected microphone for browser speech requires desktop Chrome/Edge 135 or newer. Update the browser or choose System default.')
+    return { stop: () => {}, live: () => false }
+  }
   const Ctor =
     (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition
   if (!Ctor) {
@@ -617,10 +644,14 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
   let lastWake = 0
   let lastAlive = Date.now()
   let silenceTimer: ReturnType<typeof setTimeout> | null = null
+  let restartTimer: ReturnType<typeof setTimeout> | null = null
+  let finalIndex = 0
+  let retryMs = 100
 
   /** Same assembly rules as the premium path — a pause is not a full stop. */
   const assemble = makeAssembler({
     emit: (text) => {
+      if (stopped || h.mode() === 'deaf' || h.mode() === 'wake') return
       diag.dropped = ''
       diag.accepted++
       diag.holding = ''
@@ -647,10 +678,12 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
   }
 
   const emit = () => {
-    const text = `${settled} ${interim}`.replace(/\s+/g, ' ').trim()
+    // Interim guesses can still change ("Instagram" often starts as "instant").
+    // Only final recognition results may execute a command.
+    const text = settled.replace(/\s+/g, ' ').trim()
     const mode = h.mode()
     reset()
-    if (!text || mode === 'deaf') return
+    if (stopped || !text || mode === 'deaf') return
     if (isEcho(text, speakingNow())) {
       drop('echo of his own voice')
       return
@@ -670,33 +703,34 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
       }
       return
     }
-    // The recogniser has already endpointed on its own 900ms gap; the assembler
-    // decides whether that gap actually ended the thought. `false` because a
-    // result only reaches here once the recogniser has gone quiet.
     assemble.feed(text, false)
   }
 
   const bumpSilence = () => {
     clearSilence()
-    // Endpoint on a short quiet gap; the ElevenLabs path tunes this more
-    // finely, but a fixed window is plenty for the fallback.
-    silenceTimer = setTimeout(emit, 900)
+    if (settled && !interim) silenceTimer = setTimeout(emit, settings.pauseMs)
   }
 
   const onResult = (e: any) => {
+    if (stopped) return
     touch()
+    clearSilence()
     const mode = h.mode()
     diag.mode = mode
     if (mode === 'deaf') {
-      interim = ''
+      reset()
+      assemble.cancel()
+      finalIndex = e.results.length
       return
     }
     let fresh = ''
     interim = ''
-    for (let i = e.resultIndex; i < e.results.length; i++) {
+    for (let i = finalIndex; i < e.results.length; i++) {
       const chunk = e.results[i][0].transcript as string
-      if (e.results[i].isFinal) fresh += chunk
-      else interim += chunk
+      if (e.results[i].isFinal) {
+        fresh += ` ${chunk}`
+        finalIndex = i + 1
+      } else interim += ` ${chunk}`
     }
     const heard = `${settled}${fresh} ${interim}`.replace(/\s+/g, ' ').trim()
     if (!heard) return
@@ -706,20 +740,17 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
     }
 
     if (mode === 'wake') {
+      assemble.cancel()
       settled += fresh
-      if (WAKE.test(heard) && Date.now() - lastWake > WAKE_DEBOUNCE) {
-        lastWake = Date.now()
-        diag.wakes++
-        const trailing = afterWake(heard)
-        reset()
-        h.onWake(trailing)
-      } else if (settled.length > 400) {
-        settled = ''
-      }
+      diag.heard = heard
+      diag.heardAt = Date.now()
+      // Keep the whole wake-and-command until the recogniser commits it.
+      bumpSilence()
       return
     }
 
     settled += fresh
+    assemble.pause()
     const full = `${settled} ${interim}`.replace(/\s+/g, ' ').trim()
     if (!started || (mode === 'guard' && !barged)) {
       const words = full.split(/\s+/).filter(Boolean).length
@@ -756,38 +787,60 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
   }
 
   const spin = () => {
-    if (stopped || running) return
-    rec = new Ctor()
+    if (stopped || rec) return
+    const instance = new Ctor()
+    rec = instance
+    finalIndex = 0
     rec.continuous = true
     rec.interimResults = true
-    rec.lang = 'en-GB'
+    rec.lang = settings.language
+    rec.maxAlternatives = 1
     rec.onstart = () => {
+      if (rec !== instance || stopped) return
       running = true
       diag.running = true
       diag.sessions++
       touch()
     }
-    rec.onresult = onResult
+    rec.onresult = (event: any) => {
+      if (rec !== instance) return
+      retryMs = 100
+      onResult(event)
+    }
     rec.onerror = (ev: any) => {
+      if (rec !== instance || stopped) return
       diag.lastError = String(ev.error ?? '')
-      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+      if (['not-allowed', 'service-not-allowed', 'audio-capture', 'language-not-supported'].includes(ev.error)) {
         stopped = true
+        running = false
+        reset()
+        assemble.cancel()
         diag.running = false
-        h.onError('Microphone access was refused — voice input is unavailable.')
+        h.onError(`Speech recognition unavailable (${ev.error}). Check microphone permission and speech language.`)
+      } else if (ev.error === 'network') {
+        retryMs = Math.min(10000, Math.max(1000, retryMs * 2))
+        h.onError('Speech recognition needs an internet connection. Reconnecting…')
       }
     }
     rec.onend = () => {
+      if (rec !== instance) return
       running = false
       diag.running = false
       touch()
       rec = null
-      if (!stopped) setTimeout(spin, 80)
+      interim = ''
+      if (!stopped) {
+        bumpSilence()
+        restartTimer = setTimeout(spin, retryMs)
+      }
     }
     try {
-      rec.start()
+      if (trackInput) rec.start(stream.getAudioTracks()[0])
+      else rec.start()
     } catch {
+      rec = null
       running = false
-      setTimeout(spin, 250)
+      restartTimer = setTimeout(spin, 1000)
     }
   }
 
@@ -797,26 +850,32 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
   // gone quiet on us — tear it down and build a fresh one.
   const health = setInterval(() => {
     if (stopped) return
+    if ((h.mode() === 'wake' || h.mode() === 'deaf') && assemble.held()) assemble.cancel()
     const idle = Date.now() - lastAlive
     diag.idleMs = idle
     if (idle < 15000) return
     diag.restarts++
+    const previous = rec
+    rec = null
     try {
-      rec?.abort()
+      previous?.abort()
     } catch {
       /* already gone */
     }
-    rec = null
     running = false
     diag.running = false
     touch()
+    interim = ''
+    bumpSilence()
     spin()
   }, 5000)
 
   return {
     stop: () => {
       stopped = true
+      running = false
       clearInterval(health)
+      if (restartTimer) clearTimeout(restartTimer)
       clearSilence()
       assemble.cancel()
       diag.running = false

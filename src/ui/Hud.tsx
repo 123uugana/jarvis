@@ -146,6 +146,19 @@ function DecodeText({ text }: { text: string }) {
 
 /* --------------------------------------------------------------------- hud */
 
+function SignalMeter() {
+  const level = useStore((s) => Math.round(s.level * 100))
+  return (
+    <aside className="rail rail-right">
+      <div className="rail-title">SIGNAL</div>
+      <div className="meter">
+        <div className="meter-fill" style={{ transform: `scaleY(${level / 100})` }} />
+      </div>
+      <div className="rail-item mono">{String(level).padStart(3, '0')}%</div>
+    </aside>
+  )
+}
+
 export function Hud() {
   const phase = useStore((s) => s.phase)
   const caption = useStore((s) => s.caption)
@@ -153,7 +166,6 @@ export function Hud() {
   const activeTool = useStore((s) => s.activeTool)
   const connected = useStore((s) => s.connected)
   const error = useStore((s) => s.error)
-  const level = useStore((s) => s.level)
   const voice = useStore((s) => s.voice)
   const bootNote = useStore((s) => s.bootNote)
   const gestures = useStore((s) => s.gestures)
@@ -226,13 +238,7 @@ export function Hud() {
       )}
 
       {/* Right rail: live telemetry, mostly for flavour */}
-      <aside className="rail rail-right">
-        <div className="rail-title">SIGNAL</div>
-        <div className="meter">
-          <div className="meter-fill" style={{ height: `${level * 100}%` }} />
-        </div>
-        <div className="rail-item mono">{(level * 100).toFixed(0).padStart(3, '0')}%</div>
-      </aside>
+      <SignalMeter />
 
       <AnimatePresence>
         {activeTool && ui.chrome.toolBadge && (

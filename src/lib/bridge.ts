@@ -1,16 +1,12 @@
-import type { AskHandlers } from './anthropic'
+import type { AskHandlers } from './brain'
 import type { Blade, Panel } from '../store'
 import { BRIDGE_WS_URL } from '../config'
 
 /**
  * Client for the local bridge (see bridge/server.mjs).
  *
- * Same `ask()` shape as the browser-direct path, so App.tsx doesn't care which
- * brain is behind it. The difference is what's reachable: this one runs on your
- * machine, so every MCP server in your Claude Code config is in play.
- *
- * The socket is the session. The bridge holds one Claude Agent SDK query per
- * connection and the whole conversation lives inside it, so a dropped socket
+ * The socket is the session. The bridge holds bounded AshnaAI conversation
+ * history per connection, so a dropped socket
  * silently wipes JARVIS's memory of the exchange while the transcript on screen
  * still shows it. That is why the reconnect below is loud rather than
  * invisible: `watchConnection` exists so the HUD can say so.
@@ -110,6 +106,13 @@ export function watchUi(fn: (op: string, args: any) => void) {
  */
 export type ConnectionState = 'open' | 'lost' | 'reconnected'
 let onConnection: ((state: ConnectionState) => void) | null = null
+let onShortcut: (() => void) | null = null
+let voiceReady = false
+export function watchShortcut(fn: () => void) { onShortcut = fn }
+export function setVoiceReady(ready: boolean) {
+  voiceReady = ready
+  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'voice_ready', ready }))
+}
 export function watchConnection(fn: (state: ConnectionState) => void) {
   onConnection = fn
 }
@@ -169,14 +172,15 @@ function dispatch(ws: WebSocket) {
     }
 
     if (msg.type === 'ready') {
-      // The bridge announces immediately on connect from Claude Code's config,
-      // then again with live status once the agent initialises. Keep listening
-      // so the later, more accurate list wins.
+      if (voiceReady) ws.send(JSON.stringify({ type: 'voice_ready', ready: true }))
+      // The bridge announces only local tool groups it actually registered.
       servers = (msg.servers ?? [])
         .map((s) => (typeof s === 'string' ? s : (s.name ?? '')))
         .filter(Boolean)
       onServers?.(servers)
       firstReady.resolve()
+    } else if (msg.type === 'shortcut') {
+      onShortcut?.()
     } else if (msg.type === 'panel' && msg.panel) {
       onPanel?.(msg.panel)
     } else if (msg.type === 'blade' && msg.blade) {

@@ -1,4 +1,5 @@
 import { getMic } from './audio'
+import { useSettings } from './settings'
 
 /**
  * Voice-activity detection and segment capture.
@@ -75,7 +76,6 @@ const START_MS = 110
  * should always have been — a cheap "have they stopped making noise" — and the
  * shorter window gets the transcript moving sooner.
  */
-const SILENCE_MS = 650
 /** Nobody speaks one segment for this long; cut it and transcribe what we have. */
 const MAX_MS = 20000
 
@@ -100,6 +100,7 @@ function pickMime(): string {
 }
 
 export async function startVad(h: VadHandlers): Promise<Vad> {
+  const silenceMs = useSettings.getState().settings.pauseMs
   let stream: MediaStream
   try {
     stream = await getMic()
@@ -137,12 +138,11 @@ export async function startVad(h: VadHandlers): Promise<Vad> {
 
   // Segment state.
   let recorder: MediaRecorder | null = null
-  let parts: Blob[] = []
   let armedAt = 0 // energy first rose; recording may be pre-rolling
   let speaking = false
   let speechStartedAt = 0
   let lastLoud = 0
-  let raf = 0
+  let timer: ReturnType<typeof setTimeout>
 
   const rms = (): number => {
     analyser.getFloatTimeDomainData(buf)
@@ -152,7 +152,8 @@ export async function startVad(h: VadHandlers): Promise<Vad> {
   }
 
   const startRecorder = () => {
-    parts = []
+    // Each recorder owns its chunks, including its asynchronous final chunk.
+    const parts: Blob[] = []
     try {
       recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream)
     } catch {
@@ -161,6 +162,12 @@ export async function startVad(h: VadHandlers): Promise<Vad> {
     recorder.ondataavailable = (e) => {
       if (e.data && e.data.size) parts.push(e.data)
     }
+    const rec = recorder
+    const startedAt = performance.now()
+    rec.onstop = () => {
+      if (stopped) return
+      h.onEnd(new Blob(parts, { type: rec.mimeType || mime || 'audio/webm' }), performance.now() - startedAt)
+    }
     recorder.start()
   }
 
@@ -168,41 +175,33 @@ export async function startVad(h: VadHandlers): Promise<Vad> {
     if (!recorder) return
     try {
       recorder.ondataavailable = null
+      recorder.onstop = null
       if (recorder.state !== 'inactive') recorder.stop()
     } catch {
       /* already gone */
     }
     recorder = null
-    parts = []
   }
 
   const endSegment = () => {
     const rec = recorder
-    const startedAt = speechStartedAt
     speaking = false
     speechStartedAt = 0
     if (!rec) return
     recorder = null
 
-    const finalise = () => {
-      const type = rec.mimeType || mime || 'audio/webm'
-      const blob = new Blob(parts, { type })
-      parts = []
-      const ms = startedAt ? performance.now() - startedAt : 0
-      h.onEnd(blob, ms)
-    }
-    rec.onstop = finalise
     try {
       if (rec.state !== 'inactive') rec.stop()
-      else finalise()
     } catch {
-      finalise()
+      h.onError('Microphone recording failed. Please try again.')
     }
   }
 
   const tick = () => {
     if (stopped) return
-    raf = requestAnimationFrame(tick)
+    // Audio must keep working when a command opens another Chrome tab.
+    // ponytail: browsers can throttle background timers; use an AudioWorklet if this becomes audible.
+    timer = setTimeout(tick, 30)
 
     const energy = rms()
     smoothEnergy += (energy - smoothEnergy) * 0.5
@@ -243,7 +242,7 @@ export async function startVad(h: VadHandlers): Promise<Vad> {
       if (smoothEnergy > release) lastLoud = now
       const quietFor = now - lastLoud
       const runFor = now - speechStartedAt
-      if (quietFor >= SILENCE_MS || runFor >= MAX_MS) {
+      if (quietFor >= silenceMs || runFor >= MAX_MS) {
         armedAt = 0
         endSegment()
       }
@@ -255,7 +254,7 @@ export async function startVad(h: VadHandlers): Promise<Vad> {
   return {
     stop: () => {
       stopped = true
-      cancelAnimationFrame(raf)
+      clearTimeout(timer)
       discardRecorder()
       try {
         source.disconnect()

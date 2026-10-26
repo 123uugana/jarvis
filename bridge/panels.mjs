@@ -1,4 +1,4 @@
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
+import { createToolServer, tool } from './tools.mjs'
 import { z } from 'zod'
 import { probeUrl } from './page.mjs'
 
@@ -318,7 +318,7 @@ argument. You know those things. Overrule it whenever you have reason to.`
  * @param {(blade: object) => void} emitBlade - pushes a blade to the browser
  */
 export function displayServer(emit, emitBlade) {
-  return createSdkMcpServer({
+  return createToolServer({
     name: 'jarvis',
     version: '1.0.0',
     instructions:

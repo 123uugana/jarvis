@@ -1,4 +1,4 @@
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
+import { createToolServer, tool } from './tools.mjs'
 import { z } from 'zod'
 
 /**
@@ -71,7 +71,7 @@ than listing them. The user knows what their own hands look like.`
  *   Sends a request to the browser and resolves with its reply.
  */
 export function visionServer(ask) {
-  return createSdkMcpServer({
+  return createToolServer({
     name: 'jarvis_eyes',
     version: '1.0.0',
     instructions:

@@ -3,43 +3,8 @@ import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useStore, type OrbitObject } from '../store'
 import { BRIDGE_HTTP_URL } from '../config'
-
-/**
- * Images revolving around the reactor.
- *
- * This is JARVIS's shelf: a screenshot he has just taken, a still he generated,
- * the cover of whatever is playing. Each one is a camera-facing plane carried
- * round a tilted circle, which is enough to read as an orbit without any of the
- * cost of real 3D — no lighting, no shadows, no depth sorting to fight.
- *
- * Not one element in here is React. The list changes whenever JARVIS adds or
- * drops an object, and expressing that as JSX would put mounts and unmounts of
- * scene objects on the React render path — the exact thing the Drive object in
- * Scene.tsx exists to avoid, and worse here, because a re-render of this subtree
- * would drop and rebuild every texture in it. So the group is built by hand and
- * reconciled inside useFrame; the steady-state cost of that is one pointer
- * comparison per frame, because the store hands back the same array identity
- * until the list genuinely changes.
- */
-
-/**
- * Paths that are genuinely on this machine's disk, as opposed to app-relative
- * URLs that happen to start with a slash. Mirrors the same test in
- * src/ui/Panels.tsx — the two cannot share it without one of them importing a
- * DOM component into the scene or the other way round, and the list of root
- * directories is the sort of thing that should be changed in both places
- * deliberately anyway.
- */
 const DISK_PATH =
   /^\/(Users|home|root|Volumes|Applications|System|Library|private|tmp|var|opt|mnt|media|srv|data)\//
-
-/**
- * A page served over http cannot load `file:///…`, and everything interesting
- * lands on disk as an absolute path. Route those through the bridge, which can
- * read them; leave data: URIs and anything else exactly as given, since the
- * page CSP is the thing deciding what is loadable and it already refuses the
- * rest.
- */
 function resolveSrc(src: string): string {
   const path = src.replace(/^file:\/\//, '')
   if (!DISK_PATH.test(path)) return src
@@ -50,12 +15,7 @@ type Entry = {
   def: OrbitObject
   mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>
   texture: THREE.Texture | null
-  /**
-   * Accumulated rather than derived from the clock. Deriving it means that
-   * changing an object's speed teleports it to wherever the new rate says it
-   * should have been by now, which looks like a dropped frame rather than like
-   * an object speeding up.
-   */
+
   angle: number
   /** Width over height of the loaded image; 1 until it arrives. */
   aspect: number
