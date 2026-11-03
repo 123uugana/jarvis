@@ -126,7 +126,7 @@ export function desktopServer({ allowWrites }) {
   })
 }
 
-// ponytail: exact everyday commands bypass the model; richer phrasing goes to Ashna.
+// shortcut: exact everyday commands bypass the model; richer phrasing goes to OpenCode.
 export function normaliseCommand(text) {
   return text.trim().replace(/[.!?]+$/, '').replace(/^(?:hey\s+)?jarvis[, ]+/i, '')
     .replace(/^(?:(?:can|could|would) you\s+)?(?:please\s+)?/i, '').replace(/,?\s+please$/i, '').replace(/\s+/g, ' ').trim()

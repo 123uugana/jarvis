@@ -1,15 +1,15 @@
 /**
  * JARVIS local bridge.
  *
- * Calls AshnaAI's OpenAI-compatible API and exposes conversation turns over a
- * WebSocket. The browser stays the face and voice; this process keeps the API
- * key, bounded history, local tools and permission gate.
+ * Uses a local OpenCode agent and exposes conversation turns over a WebSocket.
+ * The browser stays the face and voice; this process keeps bounded history,
+ * local tools and the permission gate.
  *
  *   node bridge/server.mjs
  */
 
 import { WebSocketServer } from 'ws'
-import { requireFoundationModel, runAshnaTurn } from './ashna.mjs'
+import { DEFAULT_MODEL, runOpenCodeTurn } from './opencode.mjs'
 import { displayServer } from './panels.mjs'
 import { uiServer } from './ui.mjs'
 import { chromeAvailable, chromeServer } from './chrome.mjs'
@@ -96,33 +96,16 @@ function originAllowed(origin) {
 const ALLOW_COMPUTER = process.platform === 'win32' && process.env.JARVIS_ALLOW_COMPUTER === '1'
 const ALLOW_WRITES = process.env.JARVIS_ALLOW_WRITES === '1' || ALLOW_COMPUTER
 
-/**
- * Ashna documents gpt-4o-mini as a supported foundation model. Override it
- * with ASHNA_MODEL; restart the bridge after changing the environment.
- */
-const ASHNA_API_KEY = process.env.ASHNA_API_KEY?.trim() ?? ''
-const MODEL = process.env.ASHNA_MODEL?.trim() || 'gpt-4o-mini'
-const ASHNA_TIMEOUT_MS = Math.max(1_000, Number(process.env.ASHNA_TIMEOUT_MS) || 120_000)
+const MODEL = process.env.OPENCODE_MODEL?.trim() || DEFAULT_MODEL
+const OPENCODE_TIMEOUT_MS = Math.max(1_000, Number(process.env.OPENCODE_TIMEOUT_MS) || 120_000)
 const MAX_CONTEXT_MESSAGES = Math.max(
   2,
-  Math.min(100, Number(process.env.ASHNA_MAX_CONTEXT_MESSAGES) || 20),
+  Math.min(100, Number(process.env.OPENCODE_MAX_CONTEXT_MESSAGES) || 20),
 )
-let modelVerified = false
-
-async function verifyModel(signal) {
-  if (modelVerified) return
-  await requireFoundationModel({
-    apiKey: ASHNA_API_KEY,
-    model: MODEL,
-    signal,
-    timeoutMs: ASHNA_TIMEOUT_MS,
-  })
-  modelVerified = true
-}
 
 /**
  * Compatibility policy for any built-ins explicitly registered in the future.
- * None are currently exposed to AshnaAI; keeping the deny boundary here avoids
+ * None are currently exposed to OpenCode; keeping the deny boundary here avoids
  * accidentally making shell or file writes permissive when one is added.
  */
 const READ_ONLY_BUILTINS = new Set([
@@ -444,7 +427,7 @@ Using tools:
 - If you don't know, say you don't know.`
 
 /**
- * ElevenLabs stays optional and server-only, like the Ashna credential.
+ * ElevenLabs stays optional and server-only, like model provider credentials.
  */
 function elevenKey() {
   return process.env.ELEVENLABS_API_KEY || null
@@ -1038,9 +1021,8 @@ console.log(`[jarvis] bridge listening on ws://localhost:${PORT}`)
 console.log(
   `[jarvis] speech ${elevenKey() ? 'via ElevenLabs' : 'using browser fallback voice'}`,
 )
-console.log(`[jarvis] AshnaAI model ${MODEL}`)
+console.log(`[jarvis] OpenCode model ${MODEL} (starts on the first AI request)`)
 console.log(`[jarvis] computer control ${ALLOW_COMPUTER ? 'ENABLED (PowerShell, screenshots, mouse/keyboard)' : 'disabled; use --computer to enable'}`)
-if (!ASHNA_API_KEY) console.warn('[jarvis] ASHNA_API_KEY is not set')
 console.log(
   `[jarvis] writes ${ALLOW_WRITES ? 'ENABLED' : 'disabled'}` +
     (ALLOW_WRITES ? '' : ' — set JARVIS_ALLOW_WRITES=1 to permit registered browser actions'),
@@ -1205,22 +1187,19 @@ wss.on('connection', (socket) => {
         sendTurn({ type: 'text', delta: acknowledgement })
         return { text: acknowledgement }
       }
-      await verifyModel(controller.signal)
-      return runAshnaTurn({
-      apiKey: ASHNA_API_KEY,
-      model: MODEL,
-      messages,
-      tools,
-      signal: controller.signal,
-      timeoutMs: ASHNA_TIMEOUT_MS,
-      maxToolRounds: ALLOW_COMPUTER ? 24 : 8,
-      allowTool: (name) => {
-        const allowed = decideTool(name)
-        console.log(`[jarvis] tool ${name} -> ${allowed ? 'allow' : 'deny'}`)
-        return allowed
-      },
-      onTool: (name) => sendTurn({ type: 'tool', name }),
-      onText: (delta) => sendTurn({ type: 'text', delta }),
+      return runOpenCodeTurn({
+        model: MODEL,
+        messages,
+        tools,
+        signal: controller.signal,
+        timeoutMs: OPENCODE_TIMEOUT_MS,
+        allowTool: (name) => {
+          const allowed = decideTool(name)
+          console.log(`[jarvis] tool ${name} -> ${allowed ? 'allow' : 'deny'}`)
+          return allowed
+        },
+        onTool: (name) => sendTurn({ type: 'tool', name }),
+        onText: (delta) => sendTurn({ type: 'text', delta }),
       })
     }
     void run()
@@ -1235,8 +1214,9 @@ wss.on('connection', (socket) => {
       })
       .catch((err) => {
         if (controller.signal.aborted || err?.name === 'AbortError') return
-        console.error('[jarvis] AshnaAI turn failed:', err?.code ?? err?.message ?? err)
-        sendTurn({ type: 'error', message: err?.message || 'The AshnaAI turn failed.' })
+        if (active !== turn) return
+        console.error('[jarvis] OpenCode turn failed:', err?.code ?? err?.message ?? err)
+        sendTurn({ type: 'error', message: err?.message || 'The OpenCode turn failed.' })
       })
       .finally(() => {
         if (active === turn) active = null

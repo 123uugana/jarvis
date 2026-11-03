@@ -5,7 +5,7 @@ import { BRIDGE_WS_URL } from '../config'
 /**
  * Client for the local bridge (see bridge/server.mjs).
  *
- * The socket is the session. The bridge holds bounded AshnaAI conversation
+ * The socket is the session. The bridge holds bounded conversation
  * history per connection, so a dropped socket
  * silently wipes JARVIS's memory of the exchange while the transcript on screen
  * still shows it. That is why the reconnect below is loud rather than

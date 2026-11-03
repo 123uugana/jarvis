@@ -9,7 +9,6 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { WebSocket } from 'ws'
 import { computerServer, prepareInput, runTerminal, runProcess } from '../bridge/computer.mjs'
 import { powershellPath, windowsScript, windowsCommand } from '../bridge/desktop.mjs'
-import { runAshnaTurn } from '../bridge/ashna.mjs'
 
 test('computer tools require their own opt-in and screenshot input is bounded and fresh', async () => {
   assert.deepEqual(computerServer({ enabled: false, allowWrites: true }).tools, [])
@@ -63,33 +62,13 @@ test('PowerShell returns Unicode, native failure, errors, timeouts, aborts and b
   assert.ok(Array.isArray(JSON.parse(windows.stdout)))
 })
 
-test('tool loop supplies cancellation to tools, stops sibling calls, and returns images to the model', async () => {
-  const controller = new AbortController()
-  let runs = 0
-  const calls = ['first', 'second'].map((name, index) => ({ index, id: name, function: { name, arguments: '{}' } }))
-  const fetchImpl = async () => new Response(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: calls } }] })}\n\ndata: [DONE]\n\n`)
-  await assert.rejects(runAshnaTurn({ apiKey: 'test', model: 'test', messages: [], signal: controller.signal, fetchImpl, allowTool: () => true,
-    tools: ['first', 'second'].map((name) => ({ name, parameters: {}, execute: async (_, { signal }) => { assert.equal(signal, controller.signal); runs++; controller.abort(); return 'stopped' } })),
-  }), (err) => err.name === 'AbortError')
-  assert.equal(runs, 1)
-  let requests = 0
-  await runAshnaTurn({ apiKey: 'test', model: 'test', messages: [], allowTool: () => true,
-    tools: [{ name: 'first', parameters: {}, execute: async () => ({ content: [{ type: 'text', text: 'snapshot' }, { type: 'image', mimeType: 'image/png', data: 'test-image' }] }) }],
-    fetchImpl: async (_url, init) => {
-      if (requests++ === 0) return new Response(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: calls.slice(0, 1) } }] })}\n\ndata: [DONE]\n\n`)
-      assert.equal(JSON.parse(init.body).messages.at(-1).content[1].image_url.url, 'data:image/png;base64,test-image')
-      return new Response('data: {"choices":[{"delta":{"content":"Observed"}}]}\n\ndata: [DONE]\n\n')
-    },
-  })
-})
-
 test('bridge registers computer tools only when enabled and runs exact commands without an API', { skip: process.platform !== 'win32', timeout: 20000 }, async (t) => {
   for (const enabled of [false, true]) {
     const probe = createServer()
     await new Promise((resolve) => probe.listen(0, '127.0.0.1', resolve))
     const port = probe.address().port
     await new Promise((resolve) => probe.close(resolve))
-    const child = spawn(process.execPath, ['bridge/server.mjs'], { windowsHide: true, stdio: 'ignore', env: { ...process.env, ASHNA_API_KEY: '', JARVIS_GLOBAL_HOTKEY: '0', JARVIS_BRIDGE_PORT: String(port), JARVIS_ALLOW_WRITES: '1', JARVIS_ALLOW_COMPUTER: enabled ? '1' : '0' } })
+    const child = spawn(process.execPath, ['bridge/server.mjs'], { windowsHide: true, stdio: 'ignore', env: { ...process.env, JARVIS_GLOBAL_HOTKEY: '0', JARVIS_BRIDGE_PORT: String(port), JARVIS_ALLOW_WRITES: '1', JARVIS_ALLOW_COMPUTER: enabled ? '1' : '0' } })
     t.after(async () => { if (child.exitCode === null && child.signalCode === null) { const stopped = once(child, 'exit'); child.kill(); await stopped } })
     let ready = false
     for (let i = 0; i < 60; i++) {

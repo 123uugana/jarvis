@@ -13,6 +13,7 @@ dist-ssr
 *.local
 jarvis-routines.local.json
 jarvis-routines.local.json.*.tmp
+.opencode-runtime.local/
 .env
 
 # Editor directories and files

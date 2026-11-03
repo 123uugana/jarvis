@@ -26,7 +26,7 @@ test('the bridge answers thanks without an API key or any tool execution', { tim
   await new Promise((resolve) => probe.close(resolve))
   const child = spawn(process.execPath, ['bridge/server.mjs'], {
     cwd: fileURLToPath(new URL('../', import.meta.url)), windowsHide: true, stdio: 'ignore',
-    env: { ...process.env, ASHNA_API_KEY: '', ELEVENLABS_API_KEY: '', JARVIS_BRIDGE_PORT: String(port), JARVIS_GLOBAL_HOTKEY: '0', JARVIS_ALLOW_WRITES: '0' },
+    env: { ...process.env, ELEVENLABS_API_KEY: '', JARVIS_BRIDGE_PORT: String(port), JARVIS_GLOBAL_HOTKEY: '0', JARVIS_ALLOW_WRITES: '0' },
   })
   t.after(async () => { if (child.exitCode === null) { const stopped = once(child, 'exit'); child.kill(); await stopped } })
   // Wait for the actual listener, not the startup banner printed before listen completes.

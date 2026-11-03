@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-/** Minimal local tool registry used by the Ashna Chat Completions loop. */
+/** Local tools share the same schemas between direct commands and OpenCode MCP. */
 export function tool(name, description, shape, execute) {
   const schema = z.object(shape)
   return {

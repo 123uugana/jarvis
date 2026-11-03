@@ -9,8 +9,8 @@ export type AskHandlers = {
 export type { ConnectionState } from './bridge'
 
 /**
- * One browser-facing brain interface. AshnaAI is always reached through the
- * local bridge so its API key never enters the browser bundle.
+ * One browser-facing brain interface. OpenCode is reached through the local
+ * bridge so provider credentials never enter the browser bundle.
  */
 
 export async function ask(
@@ -61,7 +61,7 @@ export function watchCapture(
 }
 
 /**
- * Barge-in aborts the bridge's Ashna request and settles the outstanding ask.
+ * Barge-in aborts the bridge's OpenCode turn and settles the outstanding ask.
  */
 export function cancel(): void {
   bridge.cancel()

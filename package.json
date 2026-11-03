@@ -2,7 +2,7 @@
   "name": "jarvis",
   "private": true,
   "version": "0.0.0",
-  "description": "A browser voice assistant with an Iron Man holographic interface, driven by AshnaAI through a small Node bridge.",
+  "description": "A browser voice assistant with an Iron Man holographic interface, driven by a local OpenCode agent.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -17,6 +17,7 @@
     "bridge": "node scripts/bridge.mjs",
     "bridge:writes": "node scripts/bridge.mjs --writes",
     "setup": "node scripts/setup.mjs",
+    "opencode": "node scripts/opencode.mjs",
     "test": "node --test"
   },
   "dependencies": {
